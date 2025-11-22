@@ -171,20 +171,20 @@
    "reqd": 1
   },
   {
+   "allow_on_submit": 1,
    "fetch_from": "production_b_no.manufacturing_date",
    "fetch_if_empty": 1,
    "fieldname": "manufacturing_date",
    "fieldtype": "Date",
-   "label": "Manufacturing Date",
-   "read_only": 1
+   "label": "Manufacturing Date"
   },
   {
+   "allow_on_submit": 1,
    "fetch_from": "production_b_no.retest_date",
    "fetch_if_empty": 1,
    "fieldname": "retestexpiry_date",
    "fieldtype": "Date",
-   "label": "Retest/Expiry Date",
-   "read_only": 1
+   "label": "Retest/Expiry Date"
   },
   {
    "fetch_from": "production_b_no.lot_no",
@@ -211,6 +211,7 @@
   {
    "fieldname": "stock_entry_reference_name",
    "fieldtype": "Link",
+   "hidden": 1,
    "in_global_search": 1,
    "in_list_view": 1,
    "label": "Stock Entry Reference Name",
@@ -288,7 +289,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-06-02 10:46:38.118444",
+ "modified": "2025-08-21 12:45:28.373976",
  "modified_by": "Administrator",
  "module": "Valence",
  "name": "Label Requisition Form",
