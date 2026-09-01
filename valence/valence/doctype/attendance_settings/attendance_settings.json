@@ -4,16 +4,25 @@
  "creation": "2025-04-17 14:19:56.309236",
  "doctype": "DocType",
  "engine": "InnoDB",
- "field_order": [
+  "field_order": [
   "section_break_fptb",
   "use_late_coming_rules",
   "short_leave_logic",
-  "short_leave_in_month"
+  "short_leave_in_month",
+  "leave_approval_section",
+  "leave_creation_window_days",
+  "super_hod_working_days_threshold",
+  "short_leave_application_section",
+  "short_leave_max_duration_hours",
+  "column_break_slas1",
+  "short_leave_personal_monthly_cap",
+  "short_leave_official_monthly_cap"
  ],
  "fields": [
   {
    "fieldname": "section_break_fptb",
-   "fieldtype": "Section Break"
+   "fieldtype": "Section Break",
+   "label": "Automatic Short Leave (Point Deduction) — Legacy"
   },
   {
    "fieldname": "short_leave_logic",
@@ -28,17 +37,76 @@
   },
   {
    "default": "0",
-   "description": "If checked, apply late coming rules (Shift Management). Otherwise, use standard attendance logic.",
+   "description": "If checked, apply late coming rules (Shift Management) — the legacy automatic point-deduction system. Otherwise, use standard attendance logic. NOTE: as of Aug 2026 policy, this is being superseded by the Short Leave Application system below; leave unchecked on new setups.",
    "fieldname": "use_late_coming_rules",
    "fieldtype": "Check",
-   "label": "Use Late Coming Rules"
+   "label": "Use Late Coming Rules (Legacy)"
+  },
+  {
+   "fieldname": "leave_approval_section",
+   "fieldtype": "Section Break",
+   "label": "Leave / OD / WFH Approval"
+  },
+  {
+   "default": "3",
+   "description": "Working days from the leave/request START date (holidays and weekly offs excluded). Employee can create backdated Leave or OD/WFH only if from_date is within this many working days before today. Does not apply to approval — HOD / Super HOD can approve anytime. HR can override. Default 3.",
+   "fieldname": "leave_creation_window_days",
+   "fieldtype": "Int",
+   "label": "Backdated Creation Window (Days)",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "default": "3",
+   "description": "Working days (holidays and week offs excluded). Applies only to backdated Leave: this many working days or more also needs Super HOD. Below this value needs only HOD. Future / same-day leave needs only HOD regardless of length. All OD/WFH requests always need Super HOD. Default 3.",
+   "fieldname": "super_hod_working_days_threshold",
+   "fieldtype": "Int",
+   "label": "Super HOD After Working Days",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "short_leave_application_section",
+   "fieldtype": "Section Break",
+   "label": "Short Leave Application Settings"
+  },
+  {
+   "default": "2",
+   "description": "Maximum duration allowed for a single Short Leave Application. Requests longer than this are blocked and must instead be applied as Half Day / Full Day Leave.",
+   "fieldname": "short_leave_max_duration_hours",
+   "fieldtype": "Float",
+   "label": "Max Duration Per Short Leave (Hours)",
+   "non_negative": 1,
+   "precision": "1",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_slas1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "2",
+   "description": "Maximum number of Personal Short Leaves an employee can apply for in a calendar month.",
+   "fieldname": "short_leave_personal_monthly_cap",
+   "fieldtype": "Int",
+   "label": "Personal Short Leave — Monthly Cap",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Maximum number of Official Short Leaves per calendar month. Set to 0 for unlimited (current policy: unlimited).",
+   "fieldname": "short_leave_official_monthly_cap",
+   "fieldtype": "Int",
+   "label": "Official Short Leave — Monthly Cap (0 = Unlimited)",
+   "non_negative": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-04-21 15:33:15.670995",
+ "modified": "2026-08-18 17:55:00.000000",
  "modified_by": "Administrator",
  "module": "Valence",
  "name": "Attendance Settings",
@@ -51,6 +119,30 @@
    "print": 1,
    "read": 1,
    "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Super HOD",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Leave Approver",
    "share": 1,
    "write": 1
   }
