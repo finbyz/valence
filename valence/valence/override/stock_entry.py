@@ -1,6 +1,6 @@
-from chemical.chemical.override.doctype.stock_entry import StockEntry as _StockEntry
 import frappe
 from erpnext.stock.doctype.stock_entry.stock_entry import get_available_materials
+from erpnext.stock.utils import get_incoming_rate
 from frappe.utils import (
 	cint,
 	comma_or,
@@ -16,10 +16,99 @@ from collections import defaultdict
 from frappe import _, bold
 from erpnext.controllers.stock_controller import BatchExpiredError
 
+try:
+	# Cloud / full chemical app
+	from chemical.chemical.override.doctype.stock_entry import StockEntry as _StockEntry
+except ModuleNotFoundError:
+	# Local bench without full chemical override package
+	from erpnext.stock.doctype.stock_entry.stock_entry import StockEntry as _StockEntry
 
 
 class StockEntry(_StockEntry):
+	def _uses_consumption_entry_cost(self) -> bool:
+		"""True when Manufacture FG cost must come from submitted consumption entries."""
+		if self.purpose != "Manufacture" or cint(self.is_return) or not self.work_order:
+			return False
+		if not cint(frappe.db.get_single_value("Manufacturing Settings", "material_consumption")):
+			return False
+		if not cint(
+			frappe.db.get_single_value("Manufacturing Settings", "get_rm_cost_from_consumption_entry")
+		):
+			return False
+		if hasattr(self, "get_consumption_entries"):
+			return bool(self.get_consumption_entries())
+		return bool(
+			frappe.db.exists(
+				"Stock Entry",
+				{
+					"docstatus": 1,
+					"work_order": self.work_order,
+					"purpose": "Material Consumption for Manufacture",
+				},
+			)
+		)
+
+	def _drop_raw_materials_for_consumption_costing(self) -> None:
+		"""Keep Finish/Manufacture as FG-only so users need not toggle Manufacturing Settings."""
+		if not self._uses_consumption_entry_cost():
+			return
+		for row in list(self.get("items") or []):
+			if not cint(row.is_finished_item) and not cint(row.is_scrap_item):
+				self.remove(row)
+
+	def get_items(self):
+		super().get_items()
+		self._drop_raw_materials_for_consumption_costing()
+
+	def validate(self):
+		self._drop_raw_materials_for_consumption_costing()
+		super().validate()
+
+	def get_basic_rate_for_manufactured_item(
+		self, finished_item_qty, outgoing_items_cost=0, has_consumption_basis=False
+	):
+		self._drop_raw_materials_for_consumption_costing()
+		parent = super().get_basic_rate_for_manufactured_item
+		try:
+			rate = parent(finished_item_qty, outgoing_items_cost, has_consumption_basis)
+		except TypeError:
+			rate = parent(finished_item_qty, outgoing_items_cost)
+
+		# Consumption + scrap costing can push FG rate below zero when scrap value
+		# exceeds booked consumption cost (common on partial Finish). ERPNext then
+		# blocks save with NonNegativeError on Basic Rate.
+		return max(0.0, flt(rate))
+
+	def set_rate_for_outgoing_items(self, reset_outgoing_rate=True, raise_error_if_no_rate=True):
+		outgoing_items_cost = 0.0
+		for d in self.get("items"):
+			if d.s_warehouse:
+				if reset_outgoing_rate:
+					args = self.get_args_for_incoming_rate(d)
+					rate = get_incoming_rate(args, raise_error_if_no_rate)
+					# Never pass negative valuation into Basic Rate (Stock Entry Detail is non_negative).
+					d.basic_rate = max(0.0, flt(rate)) if rate is not None else 0.0
+
+				d.basic_rate = max(0.0, flt(d.basic_rate))
+				d.basic_amount = flt(flt(d.transfer_qty) * flt(d.basic_rate), d.precision("basic_amount"))
+				if not d.t_warehouse:
+					outgoing_items_cost += flt(d.basic_amount)
+
+		return outgoing_items_cost
+
+	def set_basic_rate(self, reset_outgoing_rate=True, raise_error_if_no_rate=True):
+		self._drop_raw_materials_for_consumption_costing()
+		super().set_basic_rate(reset_outgoing_rate, raise_error_if_no_rate)
+		for d in self.get("items") or []:
+			if flt(d.basic_rate) < 0:
+				d.basic_rate = 0.0
+				d.basic_amount = 0.0
+
 	def add_transfered_raw_materials_in_items(self) -> None:
+		# Consumption already booked RM; Finish must not backflush them again.
+		if self._uses_consumption_entry_cost():
+			return
+
 		available_materials = get_available_materials(self.work_order)
 
 		wo_data = frappe.db.get_value(

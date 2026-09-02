@@ -53,10 +53,12 @@ doctype_js = {"Work Order" : "public/js/work_order.js",
             "Batch":"public/js/batch.js",
             "Quality Inspection":"public/js/quality_inspection.js",
 			"Shift Schedule":"public/js/shift_schedule.js",
+			"Leave Application":"public/js/leave_application.js",
 			
 }
 doctype_list_js = {"Batch":"public/js/batch_list.js",
-                   "Attendance":"public/js/attendance_list.js",}
+                   "Attendance":"public/js/attendance_list.js",
+				   "Quarterly Working Days":"public/js/quarterly_working_days_list.js",}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 doctype_calendar_js = {"Shift Assignment" : "public/js/shift_assignment_calendar.js"}
@@ -97,6 +99,13 @@ jinja = {
 
 # before_install = "valence.install.before_install"
 # after_install = "valence.install.after_install"
+after_migrate = [
+    "valence.valence.setup.leave_workflow.after_migrate",
+    "valence.valence.setup.od_wfh_workflow.after_migrate",
+    "valence.valence.monkey_patch.chemical_stock_entry.after_migrate",
+    "valence.valence.setup.short_leave_workflow.after_migrate",
+    "valence.valence.doc_events.shift_assignment.after_migrate",
+]
 
 # Uninstallation
 # ------------
@@ -130,13 +139,16 @@ jinja = {
 # -----------
 # Permissions evaluated in scripted ways
 
-# permission_query_conditions = {
-# 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
-# }
-#
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
+# #5 Department-wise Leave Access Control
+permission_query_conditions = {
+	"Leave Application": "valence.valence.override.query.leave_application_query",
+	"Attendance Request": "valence.valence.override.query.attendance_request_query",
+}
+
+has_permission = {
+	"Leave Application": "valence.valence.override.query.leave_application_has_permission",
+	"Attendance Request": "valence.valence.override.query.attendance_request_has_permission",
+}
 
 # DocType Class
 # ---------------
@@ -153,8 +165,15 @@ override_doctype_class = {
 	"Delivery Note":"valence.valence.override.delivery_note.DeliveryNote",
 	"Quality Inspection":"valence.valence.override.quality_inspection.QualityInspection",
     "Attendance":"valence.valence.override.attendance.Attendance",
-    "Shift Type":"valence.valence.override.shift_type.ShiftType"
+    "Shift Type":"valence.valence.override.shift_type.ShiftType",
+    "Leave Application": "valence.valence.override.leave_application.LeaveApplication",
+    "Leave Allocation": "valence.valence.override.leave_allocation.LeaveAllocation",
 }
+
+# MariaDB 12+: quote reserved `to_date` in HRMS leave SQL helpers
+from valence.valence.override.leave_application import apply_mariadb_leave_sql_patches
+
+apply_mariadb_leave_sql_patches()
 
 # Document Events
 # ---------------
@@ -203,13 +222,47 @@ doc_events = {
       "on_update_after_submit": "valence.valence.doc_events.attendance.set_short_leave_count"
     #   "on_cancel": "valence.valence.doc_events.attendance.cleanup_related_docs",
     #   "on_trash": "valence.valence.doc_events.attendance.cleanup_related_docs"      
-  }
+  },
+  "Shift Assignment": {
+    "validate": "valence.valence.doc_events.shift_assignment.set_weekly_off_from_schedule"
+  },
+  # Track B leave rules (shared file with Track A #8 — coordinate edits)
+  "Leave Application": {
+      "validate": "valence.valence.doc_events.leave_application.validate",
+      "before_submit": "valence.valence.doc_events.leave_application.before_submit",
+      "on_update": "valence.valence.doc_events.leave_application.on_update",
+  },
+  # #7 OD/WFH via Attendance Request
+  "Attendance Request": {
+      "before_insert": "valence.valence.doc_events.attendance_request.before_insert",
+      "validate": "valence.valence.doc_events.attendance_request.validate",
+      "on_update": "valence.valence.doc_events.attendance_request.on_update",
+  },
+   "Short Leave Application": {
+        "validate": "valence.valence.doc_events.short_leave_application.validate",
+        "before_submit": "valence.valence.doc_events.short_leave_application.before_submit",
+        "on_update": "valence.valence.doc_events.short_leave_application.on_update",
+    },
+  "Quarterly Working Days": {
+    "on_update": "valence.valence.tasks.leave_balance_update.credit_leave_from_qwd",
+   },
 
 }
 
 from erpnext.stock.serial_batch_bundle import SerialBatchCreation
 from valence.valence.monkey_patch.serial_batch_bundle import create_batch
 SerialBatchCreation.create_batch = create_batch
+
+# Optional Manufacturing Settings: skip chemical "Based on Item Required in Raw Materials"
+from valence.valence.monkey_patch.chemical_stock_entry import apply_based_on_item_optional_patch
+
+apply_based_on_item_optional_patch()
+
+# Extended Leave Approval: Desk workflow buttons respect assigned leave approver /
+# no self-approval / HR / Administrator fallback (same rules as validate + mobile API)
+from valence.valence.approval_hierarchy import patch_workflow_approval_access
+
+patch_workflow_approval_access()
 # Scheduled Tasks
 # --------------
 
@@ -224,13 +277,43 @@ scheduler_events = {
         ],
         "0 4 * * THU": [
 			"valence.api.sales_invoice_payment_remainder",
-		]
+		],
+        "0 1 1 1,4,7,10 *": [
+            "valence.valence.tasks.leave_balance_update.run_quarterly_leave_balance_update",
+        ]
     }
 }
 
 fixtures = [
     {"dt": "Custom Field", "filters": [["module", "in", ["Valence"]]]},
-    {"dt": "Property Setter", "filters": [["module", "in", ["Valence"]]]}
+    {"dt": "Property Setter", "filters": [["module", "in", ["Valence"]]]},
+    # #4 Leave Application Super HOD workflow
+    {"dt": "Role", "filters": [["name", "in", ["Super HOD"]]]},
+    {
+        "dt": "Workflow State",
+        "filters": [
+            [
+                "name",
+                "in",
+                [
+                    "Draft",
+                    "Pending HOD Approval",
+                    "Pending Super HOD Approval",
+                    "Pending Approval",
+                    "Approved",
+                    "Rejected",
+                ],
+            ]
+        ],
+    },
+    {
+        "dt": "Workflow Action Master",
+        "filters": [["name", "in", ["Apply", "Approve", "Reject"]]],
+    },
+    {
+        "dt": "Workflow",
+        "filters": [["name", "in", ["Leave Application Approval", "OD WFH Request Approval", "Short Leave Application Approval"]]],
+    },
 ]
 # Testing
 # -------
@@ -242,7 +325,11 @@ fixtures = [
 #
 override_whitelisted_methods = {
 	"erpnext.controllers.stock_controller.make_quality_inspections": "valence.valence.override.whitelisted_method.stock_controller.make_quality_inspections",
-	"chemical.query.get_batch_no":"valence.valence.override.whitelisted_method.query.get_batch_no"
+	"chemical.query.get_batch_no":"valence.valence.override.whitelisted_method.query.get_batch_no",
+	"hrms.api.roster.get_events": "valence.valence.override.whitelisted_method.roster.get_events",
+	# MariaDB 12+: bare to_date is TO_DATE(); backtick column in leave-period lookup
+	"hrms.hr.utils.get_leave_period": "valence.valence.override.leave_application.get_leave_period",
+	"hrms.api.get_leave_types": "valence.valence.doc_events.leave_application.get_leave_types",
 }
 #
 # each overriding function accepts a `data` argument;
@@ -263,7 +350,10 @@ override_whitelisted_methods = {
 
 # Request Events
 # ----------------
-# before_request = ["valence.utils.before_request"]
+before_request = [
+	"valence.valence.monkey_patch.chemical_stock_entry.apply_based_on_item_optional_patch",
+	"valence.valence.override.leave_application.apply_mariadb_leave_sql_patches",
+]
 # after_request = ["valence.utils.after_request"]
 
 # Job Events
